@@ -65,7 +65,6 @@ jobs:
           "$HOME/bin/repo" init --depth=1 \
             -u "$MANIFEST_URL" \
             -b "$MANIFEST_BRANCH"
-          git -C .repo/manifests checkout --detach "$MANIFEST_COMMIT"
           test "$(git -C .repo/manifests rev-parse HEAD)" = "$MANIFEST_COMMIT"
           mkdir -p .repo/local_manifests
           cp "$GITHUB_WORKSPACE/manifests/sheng.xml" \
