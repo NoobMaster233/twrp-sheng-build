@@ -24,6 +24,10 @@ The local manifest replaces the TWRP 12.1 Boot Control dependency at
 
 The first build is uploaded only as a GitHub Actions artifact together
 with its checksum, resolved manifest, AVB metadata, provenance and build
-log. It is not automatically published as a Release and must not be
-flashed before offline inspection and a separately authorized,
-single-recovery-slot validation.
+log. Before upload, the workflow checks the exact 100 MiB recovery
+partition size, parses the AVB algorithm and recovery hash descriptor,
+and verifies the signature against the pinned AOSP RSA-4096 test key.
+Failure diagnostics deliberately exclude `recovery.img` and are named
+`NOT-FOR-FLASHING`. A successful image is not automatically published as
+a Release and must not be flashed before offline inspection and a
+separately authorized, single-recovery-slot validation.
