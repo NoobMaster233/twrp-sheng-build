@@ -108,24 +108,51 @@ jobs:
       - name: Verify and collect artifact
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp_src/out/target/product/sheng"
           IMAGE="$OUT/recovery.img"
-          test -f "$IMAGE"
-          test "$(stat -c %s "$IMAGE")" = "$EXPECTED_RECOVERY_SIZE"
+          if [ ! -f "$IMAGE" ]; then
+            echo "::error::recovery.img was not produced at $IMAGE"
+            exit 1
+          fi
+
+          ACTUAL_SIZE="$(stat -c %s "$IMAGE")"
+          echo "recovery.img size: $ACTUAL_SIZE bytes"
+          echo "expected size:     $EXPECTED_RECOVERY_SIZE bytes"
+          if [ "$ACTUAL_SIZE" != "$EXPECTED_RECOVERY_SIZE" ]; then
+            echo "::error::recovery.img size does not match the recovery partition"
+            exit 1
+          fi
+
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
           cp "$IMAGE" "$GITHUB_WORKSPACE/artifacts/recovery.img"
           cd "$GITHUB_WORKSPACE/artifacts"
           sha256sum recovery.img > SHA256SUMS
 
           AVBTOOL="$GITHUB_WORKSPACE/twrp_src/out/host/linux-x86/bin/avbtool"
+          AVB_KEY="$GITHUB_WORKSPACE/twrp_src/external/avb/test/data/testkey_rsa4096.pem"
           if [ -x "$AVBTOOL" ]; then
-            "$AVBTOOL" info_image --image recovery.img > avb-info.txt
+            AVB_CMD=("$AVBTOOL")
           else
-            python3 "$GITHUB_WORKSPACE/twrp_src/external/avb/avbtool.py" \
-              info_image --image recovery.img > avb-info.txt
+            AVB_CMD=(python3 "$GITHUB_WORKSPACE/twrp_src/external/avb/avbtool.py")
           fi
-          grep -Fq 'Algorithm:            SHA256_RSA4096' avb-info.txt
+
+          "${AVB_CMD[@]}" info_image --image recovery.img > avb-info.txt
+          cat avb-info.txt
+          if ! grep -Eq '^Algorithm:[[:space:]]+SHA256_RSA4096[[:space:]]*$' \
+              avb-info.txt; then
+            echo "::error::recovery.img does not use SHA256_RSA4096 AVB"
+            exit 1
+          fi
+          if ! grep -Eq '^[[:space:]]*Partition Name:[[:space:]]+recovery[[:space:]]*$' \
+              avb-info.txt; then
+            echo "::error::AVB hash descriptor is not for the recovery partition"
+            exit 1
+          fi
+
+          "${AVB_CMD[@]}" verify_image \
+            --image recovery.img \
+            --key "$AVB_KEY" 2>&1 | tee avb-verify.txt
 
           {
             echo "manifest=$MANIFEST_COMMIT"
@@ -134,6 +161,7 @@ jobs:
             echo "workflow=$GITHUB_SHA"
             echo "run_id=$GITHUB_RUN_ID"
             echo "run_attempt=$GITHUB_RUN_ATTEMPT"
+            echo "recovery_size=$ACTUAL_SIZE"
           } > provenance.txt
 
       - name: Upload recovery and provenance
@@ -144,9 +172,25 @@ jobs:
             artifacts/recovery.img
             artifacts/SHA256SUMS
             artifacts/avb-info.txt
+            artifacts/avb-verify.txt
             artifacts/provenance.txt
             resolved-manifest.xml
             build.log
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: twrp-sheng-diagnostics-NOT-FOR-FLASHING-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/SHA256SUMS
+            artifacts/avb-info.txt
+            artifacts/avb-verify.txt
+            resolved-manifest.xml
+            build.log
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
