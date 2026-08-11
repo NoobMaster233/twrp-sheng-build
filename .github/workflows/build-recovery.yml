@@ -1,0 +1,153 @@
+name: Build fixed TWRP recovery for sheng
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  MANIFEST_URL: https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git
+  MANIFEST_BRANCH: twrp-12.1
+  MANIFEST_COMMIT: 6dc117d9cbd08430daa16db2013560e1c4017fa8
+  DEVICE_COMMIT: a9a2994997fa3574b6e718561b5d1c884661b89e
+  BOOTCTRL_COMMIT: a359fdddf152642e6d23834058859ed4ecaabcf9
+  EXPECTED_RECOVERY_SIZE: 104857600
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out build definition
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo docker image prune --all --force
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /opt/hostedtoolcache
+          df -h
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache curl flex g++-multilib \
+            gcc-multilib git git-lfs gnupg gperf imagemagick \
+            lib32ncurses5-dev lib32readline-dev lib32z1-dev libelf-dev \
+            liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
+            libssl-dev libxml2 libxml2-utils lzop pngcrush \
+            python-is-python3 python3 rsync schedtool squashfs-tools \
+            xsltproc zip zlib1g-dev
+          git lfs install
+
+      - name: Install repo tool
+        run: |
+          mkdir -p "$HOME/bin"
+          curl --fail --location --retry 5 \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            --output "$HOME/bin/repo"
+          chmod 0755 "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          "$HOME/bin/repo" --version
+
+      - name: Initialize and sync pinned sources
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          mkdir twrp_src
+          cd twrp_src
+          "$HOME/bin/repo" init --depth=1 \
+            -u "$MANIFEST_URL" \
+            -b "$MANIFEST_BRANCH"
+          git -C .repo/manifests checkout --detach "$MANIFEST_COMMIT"
+          test "$(git -C .repo/manifests rev-parse HEAD)" = "$MANIFEST_COMMIT"
+          mkdir -p .repo/local_manifests
+          cp "$GITHUB_WORKSPACE/manifests/sheng.xml" \
+            .repo/local_manifests/sheng.xml
+          "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle \
+            --no-tags -j"$(nproc)"
+          "$HOME/bin/repo" manifest -r \
+            -o "$GITHUB_WORKSPACE/resolved-manifest.xml"
+          df -h
+
+      - name: Verify source provenance and fixes
+        run: |
+          cd twrp_src
+          test "$(git -C .repo/manifests rev-parse HEAD)" = "$MANIFEST_COMMIT"
+          test "$(git -C device/xiaomi/sheng rev-parse HEAD)" = "$DEVICE_COMMIT"
+          test "$(git -C hardware/qcom-caf/bootctrl rev-parse HEAD)" = "$BOOTCTRL_COMMIT"
+          grep -Fq 'slot_suffix_arr[i] != NULL' \
+            hardware/qcom-caf/bootctrl/1.1/libboot_control_qti/libboot_control_qti.cpp
+          grep -Fq '!strcmp(ptn_list[i], PTN_MULTIIMGOEM)' \
+            hardware/qcom-caf/bootctrl/1.1/libboot_control_qti/libboot_control_qti.cpp
+          grep -Fq '!strcmp(ptn_list[i], PTN_MULTIIMGQTI)' \
+            hardware/qcom-caf/bootctrl/1.1/libboot_control_qti/libboot_control_qti.cpp
+          grep -Fq 'BOARD_AVB_RECOVERY_ALGORITHM := SHA256_RSA4096' \
+            device/xiaomi/sheng/BoardConfig.mk
+          grep -Fq 'external/avb/test/data/testkey_rsa4096.pem' \
+            device/xiaomi/sheng/BoardConfig.mk
+
+      - name: Build recoveryimage
+        shell: bash
+        run: |
+          set -o pipefail
+          cd twrp_src
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export USE_CCACHE=1
+          export CCACHE_DIR=/tmp/ccache
+          ccache --max-size=8G
+          source build/envsetup.sh
+          lunch twrp_sheng-eng
+          mka recoveryimage -j"$(nproc)" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Verify and collect artifact
+        shell: bash
+        run: |
+          set -o pipefail
+          OUT="$GITHUB_WORKSPACE/twrp_src/out/target/product/sheng"
+          IMAGE="$OUT/recovery.img"
+          test -f "$IMAGE"
+          test "$(stat -c %s "$IMAGE")" = "$EXPECTED_RECOVERY_SIZE"
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp "$IMAGE" "$GITHUB_WORKSPACE/artifacts/recovery.img"
+          cd "$GITHUB_WORKSPACE/artifacts"
+          sha256sum recovery.img > SHA256SUMS
+
+          AVBTOOL="$GITHUB_WORKSPACE/twrp_src/out/host/linux-x86/bin/avbtool"
+          if [ -x "$AVBTOOL" ]; then
+            "$AVBTOOL" info_image --image recovery.img > avb-info.txt
+          else
+            python3 "$GITHUB_WORKSPACE/twrp_src/external/avb/avbtool.py" \
+              info_image --image recovery.img > avb-info.txt
+          fi
+          grep -Fq 'Algorithm:            SHA256_RSA4096' avb-info.txt
+
+          {
+            echo "manifest=$MANIFEST_COMMIT"
+            echo "device=$DEVICE_COMMIT"
+            echo "bootctrl=$BOOTCTRL_COMMIT"
+            echo "workflow=$GITHUB_SHA"
+            echo "run_id=$GITHUB_RUN_ID"
+            echo "run_attempt=$GITHUB_RUN_ATTEMPT"
+          } > provenance.txt
+
+      - name: Upload recovery and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: twrp-sheng-source-fix-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/recovery.img
+            artifacts/SHA256SUMS
+            artifacts/avb-info.txt
+            artifacts/provenance.txt
+            resolved-manifest.xml
+            build.log
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

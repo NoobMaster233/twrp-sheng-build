@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <remove-project name="android_hardware_qcom_bootctrl" />
+  <project
+      name="NoobMaster233/android_hardware_qcom_bootctrl"
+      path="hardware/qcom-caf/bootctrl"
+      remote="github"
+      revision="a359fdddf152642e6d23834058859ed4ecaabcf9"
+      clone-depth="1" />
+  <project
+      name="map220v/android_device_xiaomi_sheng"
+      path="device/xiaomi/sheng"
+      remote="github"
+      revision="a9a2994997fa3574b6e718561b5d1c884661b89e"
+      clone-depth="1" />
+</manifest>
