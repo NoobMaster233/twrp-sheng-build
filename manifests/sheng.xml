@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
+  <remove-project name="android_bootable_recovery" />
   <remove-project name="android_hardware_qcom_bootctrl" />
+  <project
+      name="NoobMaster233/android_bootable_recovery"
+      path="bootable/recovery"
+      remote="github"
+      revision="610555eb3535fa2d9df2e6091c0ee9f93dd169df"
+      clone-depth="1" />
   <project
       name="NoobMaster233/android_hardware_qcom_bootctrl"
       path="hardware/qcom-caf/bootctrl"
