@@ -10,6 +10,7 @@ env:
   MANIFEST_URL: https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git
   MANIFEST_BRANCH: twrp-12.1
   MANIFEST_COMMIT: 6dc117d9cbd08430daa16db2013560e1c4017fa8
+  RECOVERY_COMMIT: 610555eb3535fa2d9df2e6091c0ee9f93dd169df
   DEVICE_COMMIT: a9a2994997fa3574b6e718561b5d1c884661b89e
   BOOTCTRL_COMMIT: a359fdddf152642e6d23834058859ed4ecaabcf9
   EXPECTED_RECOVERY_SIZE: 104857600
@@ -79,6 +80,7 @@ jobs:
         run: |
           cd twrp_src
           test "$(git -C .repo/manifests rev-parse HEAD)" = "$MANIFEST_COMMIT"
+          test "$(git -C bootable/recovery rev-parse HEAD)" = "$RECOVERY_COMMIT"
           test "$(git -C device/xiaomi/sheng rev-parse HEAD)" = "$DEVICE_COMMIT"
           test "$(git -C hardware/qcom-caf/bootctrl rev-parse HEAD)" = "$BOOTCTRL_COMMIT"
           grep -Fq 'slot_suffix_arr[i] != NULL' \
@@ -87,6 +89,10 @@ jobs:
             hardware/qcom-caf/bootctrl/1.1/libboot_control_qti/libboot_control_qti.cpp
           grep -Fq '!strcmp(ptn_list[i], PTN_MULTIIMGQTI)' \
             hardware/qcom-caf/bootctrl/1.1/libboot_control_qti/libboot_control_qti.cpp
+          test "$(grep -Fc 'if (touchReleaseOnNextSynReport == 0)' \
+            bootable/recovery/minuitwrp/events.cpp)" = 2
+          grep -Fq 'touchReleaseOnNextSynReport = 2;' \
+            bootable/recovery/minuitwrp/events.cpp
           grep -Fq 'BOARD_AVB_RECOVERY_ALGORITHM := SHA256_RSA4096' \
             device/xiaomi/sheng/BoardConfig.mk
           grep -Fq 'external/avb/test/data/testkey_rsa4096.pem' \
@@ -156,6 +162,7 @@ jobs:
 
           {
             echo "manifest=$MANIFEST_COMMIT"
+            echo "recovery=$RECOVERY_COMMIT"
             echo "device=$DEVICE_COMMIT"
             echo "bootctrl=$BOOTCTRL_COMMIT"
             echo "workflow=$GITHUB_SHA"
